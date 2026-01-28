@@ -1,0 +1,1104 @@
+---
+title: "Medusahead Manuscript Final Stats and Figures"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+## All Libraries
+```{r,eval=FALSE}
+# Map
+library(tidyverse)
+library(ggmap)
+register_google(key="AIzaSyAaWOnP04tLvc8Gm3XOk3DFExGY_WF0qDQ",write=TRUE)
+
+# Precip
+library(ggplot2)
+library(cowplot)
+
+# Ordinations
+library(vegan)
+library(dplyr)
+
+# Models
+library(nlme)
+library(multcomp)
+library(stargazer)
+library(kableExtra)
+
+# Boxplots
+library(ggplot2)
+
+```
+
+## Map of Site Locations
+
+#### Libraries
+```{r}
+library(tidyverse)
+library(ggmap)
+register_google(key="AIzaSyAaWOnP04tLvc8Gm3XOk3DFExGY_WF0qDQ",write=TRUE)
+```
+
+```{r,eval=F}
+# Base map-----
+ca.map <- get_map(location=c(lon=-121.5,lat=39.5),
+                  source = "google",
+                  maptype = "satellite",
+                  zoom=7)
+ca <- ggmap(ca.map,extent= "panel")
+plot(ca)
+```
+
+```{r,eval=F}
+
+# Add Points----
+Sites <- c("SFREC","Dye Creek","El Dorado (Traverse Creek)","El Dorado (Pollock Pines)","Plumas","Lassen")
+Precip <- c("Low","Low","High","High","High","Low")
+Lat <- c(39.26,40.11,38.87,38.79,39.98,40.38)
+Long <- c(-121.33,-122.05,-120.82,-120.56,-120.90,-120.81)
+Locations <- data.frame(Sites,Lat,Long,Precip)
+nudge_x <- c(0,0,-0.1,1.6,0,0)
+nudge_y <- c(0,0,-0.1,-0.5,0,0)
+Locations$nudge_x <- nudge_x
+Locations$nudge_y <- nudge_y
+Locations$Precip <- factor(Locations$Precip,levels=c("Low","High"))
+
+# SFREC: 39.26, -121.33
+# DC: 40.11, -122.05
+# TC: 38.87, -120.82
+# PP: 38.79, -120.56
+#Plumas: 39.98, -120.90
+# Lassen: 40.38, -120.81
+```
+
+```{r}
+ca.map <- get_map(location=c(lon=-121.5,lat=39.5),
+                  source = "google",
+                  maptype = "satellite",
+                  zoom=7)
+ggmap(ca.map,extent= "panel")+
+  geom_point(data=Locations,
+             aes(x=Long,y=Lat,color=Precip),
+             size=4)+
+  geom_label(data=Locations,
+             aes(x=Long,y=Lat,label=Sites),
+             hjust=1,vjust=-0.5,size=6,
+             nudge_x = Locations$nudge_x,
+             nudge_y = Locations$nudge_y)+
+  xlab("Longitute")+
+  ylab("Latitude")+
+  theme(text = element_text(size=18))
+#ggsave("Figures/map.png",width = 8,height=8)
+```
+
+
+## Precipitation Boxplot
+Based on data downloaded from PRISM, 20 year averages
+
+#### Libraries
+```{r}
+library(ggplot2)
+library(cowplot)
+```
+
+#### Prep
+
+```{r,eval=F}
+yearly.precip <- read.csv("data/yearly.precip.csv")
+#Getting the means the way I did confronts a bug in R versions later than 3.0. I will write the df and reupload it as a workaround
+#write_csv(yearly.precip,"yearly_precip.csv")
+yearly.precip <- read.csv("data/yearly_precip.csv")
+
+#Something got messed up, re-ran the above 2 lines and did not do any of the transformations below
+yearly.precip$total_precip <- as.numeric(yearly.precip$total_precip)
+yearly.precip$precip_level <- factor(yearly.precip$precip_level,levels=c("Low","Medium","High"))
+yearly.precip$site <- as.factor(yearly.precip$site)
+yearly.precip$site_code <- as.factor(yearly.precip$site_code)
+yearly.precip$year <- as.factor(yearly.precip$year)
+
+# change medium to high
+precip.change <- yearly.precip$precip_level
+precip.change<-replace(precip.change, precip.change=="Medium", "High") 
+yearly.precip$precip_level <- precip.change
+```
+
+#### Plot
+
+```{r}
+#Plot Total Annual Precip
+yearly.plot <- ggplot(yearly.precip,aes(x=reorder(site,total_precip),y=precip_cm,color=precip_level))
+
+precip.plot <- yearly.plot +
+  geom_boxplot(fill = "white") +
+  ggtitle("Annual Precipitation by Site (cm)") +
+  xlab("Site") +
+  ylab("Precip (cm)") +
+  labs(color = "Precip Level")+
+  theme(text = element_text(size=18),
+        axis.text.x=element_text(angle=45,vjust=1,hjust=1))
+#ggsave("Figures/annual_precip.png",width = 6, height=6)
+
+# Cowplot-----
+plot_grid(map.plot,precip.plot,labels=c("A","B"),label_size=16)
+ggsave("Figures/map-precip.png",width = 15.35,height=7)
+```
+
+## Soil Ordinations
+
+#### Libraries
+```{r}
+library(vegan)
+library(dplyr)
+```
+
+#### Prep
+
+```{r,eval=F}
+#soilordi.rare <- read.csv(Soil/data/soilrare.otu.csv)
+
+ordi.rare <- soilrare.otu
+ordi.rare <- subset.data.frame(ordi.rare,ordi.rare$Transect=="Forage"|ordi.rare$Transect=="MH")
+ordi.rare$SpeciesxPrecip <- paste(ordi.rare$Species,ordi.rare$Precip_Level,sep="_")
+ordi.rare <- ordi.rare[,c(1:8,6918,9:6917)]
+
+ordi.rare.nomix.meta <- ordi.rare[,c(1:24)]
+ordi.rare.nomix.otu <- ordi.rare[,-c(1:24)]
+
+ordi.rare.nomix.meta$Transect <- as.factor(ordi.rare.nomix.meta$Transect)
+ordi.rare.nomix.meta$Precip_Level <- factor(ordi.rare.nomix.meta$Precip_Level,levels=c("Low","High"))
+ordi.rare.nomix.meta$TransectxPrecip <- factor(ordi.rare.nomix.meta$TransectxPrecip,levels=c("Forage_Low","MH_Low","Forage_High","MH_High"))
+ordi.rare.nomix.meta$TransectxPrecip <- factor(ordi.rare.nomix.meta$SpeciesxPrecip,levels=c("Avena_Low","Bromus_Low","MH_Low","Avena_High","Bromus_High","MH_High"))
+write.csv(ordi.rare,"ordi.rare.csv")
+
+br.mh <- subset.data.frame(ordi.rare,ordi.rare$Site_Code=="PLBR"|
+                             ordi.rare$Site_Code=="PLAV"|
+                             ordi.rare$Site_Code=="PP"|
+                             ordi.rare$Site_Code=="LS")
+br.mh <- br.mh[-c(5:12),]
+br.mh.meta <- br.mh[,c(1:24)]
+br.mh.otu <- br.mh[,-c(1:24)]
+
+av.mh <- subset.data.frame(ordi.rare,ordi.rare$Site_Code=="PLAV"|
+                             ordi.rare$Site_Code=="SF"|
+                             ordi.rare$Site_Code=="DC"|
+                             ordi.rare$Site_Code=="TC")
+av.mh.meta <- av.mh[,c(1:24)]
+av.mh.otu <- av.mh[,-c(1:24)]
+
+write.csv(ordi.rare.nomix,"data/soil_otu_nomix_rare.csv")
+write.csv(ordi.rare.nomix.meta,"data/soil_otu_nomix_rare_meta.csv")
+```
+
+## Figures
+```{r, eval=F}
+# AV-MH Comparison-------
+nmds.av <- metaMDS(av.mh.otu)
+# stress 0.177- only ok....not great
+scores.av <- scores(nmds.av,display='site')
+scores.av <- as.data.frame(scores.av)
+
+##add meta data
+scores.av <- cbind(as.data.frame(scores.av),Sample=av.mh.meta$Sample) 
+scores.av<- full_join(scores.av,av.mh.meta, by="Sample")
+
+nmds.av.plot <- ggplot(scores.av,aes(x=NMDS1, y=NMDS2, color=SpeciesxPrecip))
+
+final_soil_av_nmds <- nmds.av.plot +
+  geom_point(data=scores.av,size=2)+
+  stat_ellipse(data=scores.av,geom="polygon",alpha=0.1,aes(fill=SpeciesxPrecip))+
+  scale_fill_manual(values = c('dodgerblue4','deepskyblue1','red4','orangered'))+
+  scale_color_manual(values = c('dodgerblue4','deepskyblue1','red4','orangered'))+
+  ggtitle("A. barbata-Medusaehad Soil Community")
+ggsave("final_soil_av_nmds.png",width=8,height=7)
+```
+
+```{r,eval=F}
+## BR-MH Comparison-------
+nmds.br <- metaMDS(br.mh.otu)
+scores.br <- scores(nmds.br,display='site')
+scores.br <- as.data.frame(scores.br)
+
+##add meta data
+scores.br <- cbind(as.data.frame(scores.br),Sample=br.mh.meta$Sample) 
+scores.br<- full_join(scores.br,br.mh.meta, by="Sample")
+
+nmds.br.plot <- ggplot(scores.br,aes(x=NMDS1, y=NMDS2, color=SpeciesxPrecip))
+
+final_soil_br_nmds <- nmds.br.plot +
+  geom_point(data=scores.br,size=2)+
+  stat_ellipse(data=scores.br,type="norm",level=0.95,geom="polygon",alpha=0.1,aes(fill=SpeciesxPrecip))+
+  scale_fill_manual(values = c('darkolivegreen','seagreen3','red4','orangered'))+
+  scale_color_manual(values = c('darkolivegreen','seagreen3','red4','orangered'))+
+  ggtitle("B. tectorum-Medusaehad Soil Community")
+ggsave("final_soil_br_nmds.png",width=8,height=7)
+```
+
+```{r,eval=F}
+## cowplot-------
+library(cowplot)
+final_soil_av_nmds
+final_soil_br_nmds
+
+plot_grid(final_soil_av_nmds, final_soil_br_nmds, 
+          labels = c('A', 'B'), 
+          label_size = 20)
+ggsave("Figures/soil_db_cow.png",width = 12,height=5)
+```
+
+#### PERMANOVAs
+```{r,eval=F}
+## BR-MH Comparison-----
+set.seed(2025)
+br.perm <- adonis2(br.mh.otu~Precip_Level+Species+Precip_Level*Species,
+                   distance="bray",
+                   permutation=999,
+                   by="terms",
+                   data=br.mh.meta)
+br.perm
+# all p<0.001
+br.disp <- vegdist(br.mh.otu,method="bray") #make a distance matrix of data
+anova(betadisper(br.disp,br.mh.meta$Precip_Level))
+#Precip: 0.95
+
+anova(betadisper(br.disp,br.mh.meta$Species))
+#transect: 0.041
+# 18 MH, 22 Br
+
+anova(betadisper(br.disp,br.mh.meta$SpeciesxPrecip))
+# int: 0.10
+```
+
+```{r,eval=F}
+#### AV-MH Comparison-----
+set.seed(2025)
+av.perm <- adonis2(av.mh.otu~Precip_Level+Species+Precip_Level*Species,
+                   distance="bray",
+                   permutation=999,
+                   by="terms",
+                   data=av.mh.meta)
+av.perm
+# all p<0.015
+av.disp <- vegdist(av.mh.otu,method="bray") #make a distance matrix of data
+anova(betadisper(av.disp,av.mh.meta$Precip_Level))
+#Precip: 0.015*
+# 31 low, 22 high
+
+anova(betadisper(av.disp,av.mh.meta$Species))
+#transect: 0.78
+
+anova(betadisper(av.disp,av.mh.meta$SpeciesxPrecip))
+# int: 0.23
+```
+
+## Root Ordinations
+#### Prep
+```{r,eval=F}
+# Prep-----
+root.otu.nomix <- rootrare.otu
+write.csv(root.otu.nomix,"root.otu.nomix.csv")
+root.otu.nomix <- subset.data.frame(root.otu.nomix,root.otu.nomix$Transect=="Forage"|
+                                      root.otu.nomix$Transect=="MH")
+root.otu.nomix$SpeciesxPrecip <- paste(root.otu.nomix$Species,root.otu.nomix$Precip_Level,sep="_")
+root.otu.nomix <- root.otu.nomix[,c(1:8,10435,9:10434)]
+
+root.otu.nomix.meta <- root.otu.nomix[,c(1:9)]
+root.otu.nomix.otu <- root.otu.nomix[,-c(1:24)]
+
+root.otu.nomix.meta$Transect <- as.factor(root.otu.nomix.meta$Transect)
+root.otu.nomix.meta$Precip_Level <- factor(root.otu.nomix.meta$Precip_Level,levels=c("Low","High"))
+root.otu.nomix.meta$TransectxPrecip <- factor(root.otu.nomix.meta$SpeciesxPrecip,levels=c("Avena_Low","Bromus_Low","MH_Low","Avena_High","Bromus_High","MH_High"))
+
+br.mh <- subset.data.frame(root.otu.nomix,root.otu.nomix$Site_Code=="PLBR"|
+                             root.otu.nomix$Site_Code=="PLAV"|
+                             root.otu.nomix$Site_Code=="PP"|
+                             root.otu.nomix$Site_Code=="LS")
+br.mh <- br.mh[-c(5:12),]
+br.mh.meta <- br.mh[,c(1:24)]
+br.mh.otu <- br.mh[,-c(1:24)]
+
+av.mh <- subset.data.frame(root.otu.nomix,root.otu.nomix$Site_Code=="PLAV"|
+                             root.otu.nomix$Site_Code=="SF"|
+                             root.otu.nomix$Site_Code=="DC"|
+                             root.otu.nomix$Site_Code=="TC")
+av.mh.meta <- av.mh[,c(1:24)]
+av.mh.otu <- av.mh[,-c(1:24)]
+
+write.csv(root.otu.nomix,"data/root_otu_nomix.csv")
+write.csv(root.otu.nomix.meta,"data/root_otu_nmix_meta.csv")
+
+```
+
+#### Figures
+```{r}
+## AV-MH Comparison-------
+nmds.av <- metaMDS(av.mh.otu)
+scores.av <- scores(nmds.av,display='site')
+scores.av <- as.data.frame(scores.av)
+
+##add meta data
+scores.av <- cbind(as.data.frame(scores.av),Sample=av.mh.meta$Sample) 
+scores.av<- full_join(scores.av,av.mh.meta, by="Sample")
+
+nmds.av.plot <- ggplot(scores.av,aes(x=NMDS1, y=NMDS2, color=SpeciesxPrecip))
+
+final_root_av_nmds <- nmds.av.plot +
+  geom_point(data=scores.av,size=2)+
+  stat_ellipse(data=scores.av,geom="polygon",alpha=0.1,aes(fill=SpeciesxPrecip))+
+  scale_fill_manual(values = c('dodgerblue4','deepskyblue1','red4','orangered'))+
+  scale_color_manual(values = c('dodgerblue4','deepskyblue1','red4','orangered'))+
+  ggtitle("A. barbata-Medusahead root Community")
+ggsave("final_root_av_nmds.png",width=8,height=7)
+```
+
+```{r}
+## BR-MH Comparison-------
+nmds.br <- metaMDS(br.mh.otu)
+scores.br <- scores(nmds.br,display='site')
+scores.br <- as.data.frame(scores.br)
+
+##add meta data
+scores.br <- cbind(as.data.frame(scores.br),Sample=br.mh.meta$Sample) 
+scores.br<- full_join(scores.br,br.mh.meta, by="Sample")
+
+nmds.br.plot <- ggplot(scores.br,aes(x=NMDS1, y=NMDS2, color=SpeciesxPrecip))
+final_root_br_nmds <- nmds.br.plot +
+  geom_point(data=scores.br,size=2)+
+  stat_ellipse(data=scores.br,geom="polygon",alpha=0.1,aes(fill=SpeciesxPrecip))+
+  scale_fill_manual(values = c('darkolivegreen','seagreen3','red4','orangered'))+
+  scale_color_manual(values = c('darkolivegreen','seagreen3','red4','orangered'))+
+  ggtitle("B. tectorum-Medusaehad root Community")
+ggsave("final_root_br_nmds.png",width=8,height=7)
+```
+
+```{r}
+##cowplot----
+library(cowplot)
+final_root_av_nmds
+final_root_br_nmds
+
+plot_grid(final_root_av_nmds, final_root_br_nmds, 
+          labels = c('C', 'D'), 
+          label_size = 20)
+ggsave("Figures/root_db_cow.png",width = 12,height=5)
+```
+
+#### PERMANOVAs
+```{r}
+## BR-MH-----
+set.seed(2025)
+br.perm <- adonis2(br.mh.otu~Precip_Level+Species+Precip_Level*Species,
+                   distance="bray",
+                   permutation=999,
+                   by="terms",
+                   data=br.mh.meta)
+br.perm
+# all p<0.001
+br.disp <- vegdist(br.mh.otu,method="bray") #make a distance matrix of data
+anova(betadisper(br.disp,br.mh.meta$Precip_Level))
+
+anova(betadisper(br.disp,br.mh.meta$Species))
+
+anova(betadisper(br.disp,br.mh.meta$SpeciesxPrecip))
+```
+
+```{r}
+## AV-MH----
+set.seed(2025)
+av.perm <- adonis2(av.mh.otu~Precip_Level+Species+Precip_Level*Species,
+                   distance="bray",
+                   permutation=999,
+                   by="terms",
+                   data=av.mh.meta)
+av.perm
+# all p<0.015
+av.disp <- vegdist(av.mh.otu,method="bray") #make a distance matrix of data
+anova(betadisper(av.disp,av.mh.meta$Precip_Level))
+
+anova(betadisper(av.disp,av.mh.meta$Species))
+
+anova(betadisper(av.disp,av.mh.meta$SpeciesxPrecip))
+```
+
+## Soil Models
+
+#### Libraries
+
+```{r}
+library(nlme)
+library(multcomp)
+library(stargazer)
+library(ggplot2)
+```
+
+#### Prep
+
+```{r,eval=F}
+soil.rich <- subset.data.frame(soil.rich,soil.rich$Transect=="Forage"|
+                                 soil.rich$Transect=="MH")
+soil.rich$TransectxPrecip <- factor(soil.rich$TransectxPrecip,levels=c("Forage_Low","MH_Low","Forage_High","MH_High"))
+soil.rich$Transect <- factor(soil.rich$Transect,levels=c("Forage","MH"))
+
+soilrafun <- subset.data.frame(soilrafun,soilrafun$Transect=="Forage"|
+                                 soilrafun$Transect=="MH")
+soilrafun$TransectxPrecip <- factor(soilrafun$TransectxPrecip,levels=c("Forage_Low","MH_Low","Forage_High","MH_High"))
+soilrafun$Transect <- factor(soilrafun$Transect,levels=c("Forage","MH"))
+```
+
+#### Final Models
+
+```{r,eval=F}
+## Richness
+soilrich.gls <- lme(RichnessITS~Transect*Precip_Level,
+                random=~1|Site,
+                method="REML",
+                data=soil.rich)
+anova(soilrich.gls)
+
+##Symbiont
+soilsymb.gls <- lme(Symbiotroph~Transect*Precip_Level,
+                 method="REML",
+                 random=~1|Site,
+                 weights=varIdent(form = ~1|Site),
+                 data=soilrafun)
+anova(soilsymb.gls)
+
+##Pathogen
+soilpath.gls <- lme(Pathotroph~Transect*Precip_Level,
+                method="REML",
+                random=~1|Site,
+                weights=varIdent(form = ~1|Site),
+                data=soilrafun)
+
+anova(soilpath.gls)
+#Precip: <0.0001
+
+##Sap
+soilsap.gls <- lme(Saprotroph~Transect*Precip_Level,
+                method="REML",
+                random=~1|Site,
+                weights=varIdent(form = ~1|Site),
+                data=soilrafun)
+anova(soilsap.gls)
+#Transect: <0.0001
+#Int: 0.0632
+```
+
+#### Print Table
+
+```{r,eval=F}
+#Print Table-------
+#anovas
+soilrich.anova <- anova(soilrich.gls)
+soilsymb.anova <- anova(soilsymb.gls)
+soilpath.anova <- anova(soilpath.gls)
+soilsap.anova <- anova(soilsap.gls)
+
+# add names
+soilrich.anova$Response <- "Richness"
+soilsymb.anova$Response <- "Symbionts"
+soilpath.anova$Response <- "Pathogens"
+soilsap.anova$Response <- "Saprotrophs"
+
+# Add a row identifier column to distinguish between regression and residuals
+soilrich.anova$term <- rownames(soilrich.anova)
+soilsymb.anova$term <- rownames(soilsymb.anova)
+soilpath.anova$term <- rownames(soilpath.anova)
+soilsap.anova$term <- rownames(soilsap.anova)
+
+# Combine all ANOVA tables into one data frame
+soilanovas <- rbind(soilrich.anova, soilsymb.anova, soilpath.anova, soilsap.anova)
+
+# Reset row names
+rownames(soilanovas) <- NULL
+
+# reorder
+soilanovas <- soilanovas[,c(5,6,2,3,4)]
+soilanovas$Response <- c(NA,"Richness",NA,NA,NA,"Symbionts",NA,NA,NA,"Pathogens",NA,NA,NA,"Saprotrophs",NA,NA)
+soilanovas <- soilanovas[c(2:4,6:8,10:12,14:16),]
+colnames(soilanovas)[2] <- "Explanatory Variable"
+colnames(soilanovas)[3] <- "df"
+soilanovas$`Explanatory Variable` <- c(rep(c("Plant Community","Precipitation Level","Plant x Precipitation"),4))
+
+#print
+stargazer(soilanovas,type="text",
+          summary=F,rownames=F,colnames = T,
+          out="soilanova_table.html")
+```
+
+#### Posthoc Tests
+
+```{r}
+# Post Hoc Tests-------
+## Richness-----
+summary(glht(soilrich.gls,linfct = mcp(Precip_Level="Tukey")))
+
+soilrich.post <- lme(RichnessITS~TransectxPrecip,
+                 random=~1|Site,
+                 method="REML",
+                 data=soil.rich)
+
+summary(glht(soilrich.post,linfct = mcp(TransectxPrecip=c("MH_Low-Forage_Low=0","MH_High-Forage_High=0","MH_Low-MH_High=0","Forage_Low-Forage_High=0","MH_Low-Forage_High=0","Forage_Low-MH_High=0"))))
+
+## Symbiont-----
+soilsymb.post <- gls(Symbiotroph~TransectxPrecip,
+                method="REML",
+                weights=varIdent(form = ~1|Site),
+                data=soilrafun)
+
+summary(glht(soilsymb.post,linfct = mcp(TransectxPrecip=c("MH_Low-Forage_Low=0","MH_High-Forage_High=0","MH_Low-MH_High=0","Forage_Low-Forage_High=0","MH_Low-Forage_High=0","Forage_Low-MH_High=0"))))
+
+
+## Pathogens-----
+soilpath.post <- lme(Pathotroph~TransectxPrecip,
+                 random=~1|Site,
+                 weights=varIdent(form = ~1|Site),
+                 method="REML",
+                 data=soilrafun)
+
+summary(glht(soilpath.post,linfct = mcp(TransectxPrecip=c("MH_Low-Forage_Low=0","MH_High-Forage_High=0","MH_Low-MH_High=0","Forage_Low-Forage_High=0","MH_Low-Forage_High=0","Forage_Low-MH_High=0"))))
+
+
+##Saprotroph----
+soilsap.post<- lme(Saprotroph~Precip_Level,
+               method="REML",
+               random=~1|Site,
+               weights=varIdent(form = ~1|Site),
+               data=soilrafun)
+summary(glht(soilsap.post,linfct = mcp(Precip_Level="Tukey")))
+```
+
+## Root Models
+#### Prep
+```{r}
+## Prep----
+root.rich <- subset.data.frame(root.rich,root.rich$Species=="Forage"|
+                                 root.rich$Species=="MH")
+
+root.rich$SpeciesxPrecip <- factor(root.rich$SpeciesxPrecip,levels=c("Forage_Low","MH_Low","Forage_High","MH_High"))
+root.rich$Species <- factor(root.rich$Species,levels=c("Forage","MH"))
+
+rootrafun <- subset.data.frame(rootrafun,rootrafun$Species=="Forage"|
+                                 rootrafun$Species=="MH")
+rootrafun$SpeciesxPrecip <- factor(rootrafun$SpeciesxPrecip,levels=c("Forage_Low","MH_Low","Forage_High","MH_High"))
+rootrafun$Species <- factor(rootrafun$Species,levels=c("Forage","MH"))
+
+root.rich <- unite(data= root.rich,
+                         col=SpeciesxPrecip,
+                         c("Species","Precip_Level"),
+                         sep= "_")
+root.rich$SpeciesxPrecip <- factor(root.rich$SpeciesxPrecip, levels = c("Avena_Low","Avena_High","Bromus_Low","Bromus_High","MH_Low","MH_High"))
+
+root.rich <- separate(root.rich,SpeciesxPrecip,into=c("Species","Precip_Level"),sep = "_",remove=F)
+root.rich$Species <- factor(root.rich$Species,levels = c("Avena","Bromus","MH"))
+root.rich$Precip_Level <- factor(root.rich$Precip_Level,levels = c("Low","High"))
+
+rootrafun.label <- unite(data= rootrafun.label,
+                           col=SpeciesxPrecip,
+                           c("Species","Precip_Level"),
+                           sep= "_")
+rootrafun.label <- separate(rootrafun.label,SpeciesxPrecip,into=c("Species","Precip_Level"),sep = "_",remove=F)
+rootrafun.label$Species <- factor(rootrafun.label$Species,levels = c("Avena","Bromus","MH"))
+rootrafun.label$Precip_Level <- factor(rootrafun.label$Precip_Level,levels = c("Low","High"))
+
+rootrafun.label$SpeciesxPrecip <- factor(rootrafun.label$SpeciesxPrecip, levels = c("Avena_Low","Avena_High","Bromus_Low","Bromus_High","MH_Low","MH_High"))
+```
+
+#### Final Models
+```{r}
+## Richness (final)----
+rich.gls <- lme(RichnessITS~Species*Precip_Level,
+                 random=~1|Site,
+                 method="REML",
+                 weights=varIdent(form = ~1|Site),
+                 data=root.rich)
+anova(rich.gls)
+# tranesct and precip
+
+##Symbiont(final)----
+symb.gls <- gls(Symbiotroph~Species*Precip_Level,
+                 method="REML",
+                 weights=varIdent(form = ~1|Site),
+                 data=rootrafun)
+anova(symb.gls)
+#Species: p=0.0418
+
+##Pathogen (final)----
+path.gls <- gls(Pathotroph~Species*Precip_Level,
+                 method="REML",
+                 weights=varIdent(form = ~1|Site),
+                 data=rootrafun)
+
+anova(path.gls)
+#Precip: <0.0001
+
+anova(path.gls)
+#Precip: 0.0671
+
+##Sap----
+sap.gls <- gls(Saprotroph~Species*Precip_Level,
+                method="REML",
+                weights=varIdent(form = ~1|Site),
+                data=rootrafun)
+anova(sap.gls)
+```
+
+#### Print Table
+```{r}
+#anovas
+rich.anova <- anova(rich.gls)
+symb.anova <- anova(symb.gls)
+path.anova <- anova(path.gls)
+sap.anova <- anova(sap.gls)
+
+# add names
+rich.anova$Response <- "Richness"
+symb.anova$Response <- "Symbionts"
+path.anova$Response <- "Pathogens"
+sap.anova$Response <- "Saprotrophs"
+
+# Add a row identifier column to distinguish between regression and residuals
+rich.anova$term <- rownames(rich.anova)
+symb.anova$term <- rownames(symb.anova)
+path.anova$term <- rownames(path.anova)
+sap.anova$term <- rownames(sap.anova)
+sap.anova$denDF <- NA
+sap.anova <- sap.anova[,c(1,6,2:5)]
+
+# Combine all ANOVA tables into one data frame
+anovas <- rbind(rich.anova, symb.anova, path.anova, sap.anova)
+
+# Reset row names
+rownames(anovas) <- NULL
+
+# reorder
+anovas <- anovas[,c(5,6,2,3,4)]
+anovas <- anovas[c(2:4,6:8,10:12,14:16),]
+colnames(anovas)[2] <- "Explanatory Variable"
+colnames(anovas)[3] <- "df"
+anovas$`Explanatory Variable` <- c(rep(c("Plant Community","Precipitation Level","Plant x Precipitation"),4))
+
+#print
+stargazer(anovas,type="text",
+          summary=F,rownames=F,colnames = T,
+          out="anova_table.txt")
+```
+
+#### Posthoc Tests
+```{r}
+## Richness-----
+rich.post <- lme(RichnessITS~SpeciesxPrecip,
+                 random=~1|Site,
+                 method="REML",
+                 weights=varIdent(form = ~1|Site),
+                 data=root.rich)
+summary(glht(rich.post,linfct = mcp(SpeciesxPrecip=c("MH_Low-Avena_Low=0","MH_Low-Bromus_Low=0","Bromus_Low-Avena_Low=0", "MH_High-Avena_High=0","MH_High-Bromus_High=0","Bromus_High-Avena_High=0", "MH_Low-MH_High=0","Avena_Low-Avena_High=0","Bromus_Low-Bromus_High=0","MH_Low-Avena_High=0","MH_Low-Bromus_High=0","MH_High-Avena_Low=0","MH_High-Bromus_Low=0","Avena_Low-Bromus_High=0"))))
+
+## Symbiont----
+sym.post <- gls(Symbiotroph~SpeciesxPrecip,
+                method="REML",
+                weights=varIdent(form = ~1|Site),
+                data=rootrafun)
+
+summary(glht(sym.post,linfct = mcp(SpeciesxPrecip=c("MH_Low-Avena_Low=0","MH_Low-Bromus_Low=0","Bromus_Low-Avena_Low=0", "MH_High-Avena_High=0","MH_High-Bromus_High=0","Bromus_High-Avena_High=0", "MH_Low-MH_High=0","Avena_Low-Avena_High=0","Bromus_Low-Bromus_High=0","MH_Low-Avena_High=0","MH_Low-Bromus_High=0","MH_High-Avena_Low=0","MH_High-Bromus_Low=0","Avena_Low-Bromus_High=0"))))
+
+sym.post2 <- lme(Symbiotroph~Species,
+                random=~1|Site,
+                method="REML",
+                weights=varIdent(form = ~1|Site),
+                data=rootrafun)
+
+summary(glht(sym.post2,linfct = mcp(Species="Tukey")))
+
+## Pathogen-----
+path.post <- gls(Pathotroph~SpeciesxPrecip,
+                method="REML",
+                weights=varIdent(form = ~1|Site),
+                data=rootrafun)
+
+summary(glht(path.post,linfct = mcp(SpeciesxPrecip=c("MH_Low-Avena_Low=0","MH_Low-Bromus_Low=0","Bromus_Low-Avena_Low=0", "MH_High-Avena_High=0","MH_High-Bromus_High=0","Bromus_High-Avena_High=0", "MH_Low-MH_High=0","Avena_Low-Avena_High=0","Bromus_Low-Bromus_High=0","MH_Low-Avena_High=0","MH_Low-Bromus_High=0","MH_High-Avena_Low=0","MH_High-Bromus_Low=0","Avena_Low-Bromus_High=0"))))
+
+##Saprotroph----
+sap.post <- gls(Saprotroph~SpeciesxPrecip,
+               method="REML",
+               weights=varIdent(form = ~1|Site),
+               data=rootrafun)
+summary(glht(sap.post,linfct = mcp(SpeciesxPrecip=c("MH_Low-Avena_Low=0","MH_Low-Bromus_Low=0","Bromus_Low-Avena_Low=0", "MH_High-Avena_High=0","MH_High-Bromus_High=0","Bromus_High-Avena_High=0", "MH_Low-MH_High=0","Avena_Low-Avena_High=0","Bromus_Low-Bromus_High=0","MH_Low-Avena_High=0","MH_Low-Bromus_High=0","MH_High-Avena_Low=0","MH_High-Bromus_Low=0","Avena_Low-Bromus_High=0"))))
+
+summary(glht(sap.post,linfct = mcp(Precip_Level="Tukey")))
+```
+
+#### Plots
+```{r}
+
+```
+
+## Model Boxplots
+#### Soil
+```{r,eval=F}
+soilrichplot <- ggplot(data=soilrich, aes(Precip_Level,RichnessITS,fill=interaction(Species,Precip_Level)))+# controls box color
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Richness")+
+  guides(fill="none")+
+  ggtitle("Soil Richness")+
+  ylim(0,625)+
+ scale_fill_manual(values=c("#C8DEF7", "#B4D1BB", "#E8B8B7","#C8DEF7", "#00BA38", "#E8B8B7"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_blank(),
+        axis.title.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+##Symbiont----
+soilsymplot <- ggplot(data=soilfun, aes(Precip_Level,Symbiotroph,fill=interaction(Species,Precip_Level)))+
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Relative Abundance")+
+  guides(fill="none")+
+  ggtitle("Soil Symbionts")+
+  ylim(0,0.3)+
+    scale_fill_manual(values=c("#C8DEF7", "#B4D1BB","#E8B8B7" ,"#619CFF", "#B4D1BB", "#E8B8B7"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_text(size=6),
+        axis.title=element_text(size=8),
+        axis.ticks.x=element_blank())
+
+##Pathogen----
+soilpathplot <- ggplot(data=soilfun, aes(Precip_Level,Pathotroph,fill=Species))+
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Relative Abundance")+
+  guides(fill="none")+
+  ggtitle("Soil Pathogens")+
+  ylim(0,0.35)+
+  scale_fill_manual(values=c("#619CFF", "#00BA38","#F8766D" ,"#619CFF", "#00BA38", "#F8766D"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_blank(),
+        axis.title.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+##Sap====
+soilsapplot <- ggplot(data=soilfun, aes(Precip_Level,Saprotroph,fill=(Species)))+
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Relative Abundance")+
+  ggtitle("Soil Saprotrophs")+
+  guides(fill="none")+
+  ylim(0,0.65)+
+    scale_fill_manual(values=c("#619CFF", "#00BA38","#F8766D" ,"#619CFF", "#00BA38", "#F8766D"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_text(size=6),
+        axis.title.x=element_text(size=8))
+```
+
+#### Roots
+```{r}
+##Richness----
+rootrichplot <- ggplot(data=rootrich, aes(Precip_Level,RichnessITS))+ 
+  # make interaction fill color so you can individually do boxes
+  geom_boxplot(aes(fill=interaction(Species,Precip_Level, sep="_")),outlier.size=0.75)+
+  #colors, but set up for legend to only be Species
+  scale_fill_manual(values=c("Avena_Low"="#619CFF",
+                             "Bromus_Low"="#B4D1BB",
+                             "MH_Low"="#E8B8B7",
+                             "Avena_High"="#C8DEF7",
+                             "Bromus_High"="#B4D1BB",
+                             "MH_High"="#E8B8B7"),
+                    labels = c("Avena", "Bromus", "MH"),
+                    breaks = c("Avena_Low", "Bromus_Low", "MH_Low"),
+                    name = "Plant\nCommunity")+
+  #legend only Species
+  guides(fill = guide_legend(
+    override.aes = list(fill = c("#619CFF", "#00BA38", "#F8766D"))
+  )) +
+  
+  xlab("Precipitation Level")+
+  ylab("Richness")+
+  ggtitle("Root Richness")+
+  ylim(0,625)+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_blank(),
+        axis.title=element_blank(),
+        axis.ticks.x=element_blank())
+
+##Symbiont----
+rootsymplot <- ggplot(data=rootfun, aes(Precip_Level,Symbiotroph))+
+    geom_boxplot(aes(fill=interaction(Species,Precip_Level, sep="_")),outlier.size=0.75)+
+    #colors, but set up for legend to only be Species
+    scale_fill_manual(values=c("Avena_Low"="#619CFF",
+                               "Bromus_Low"="#B4D1BB",
+                               "MH_Low"="#E8B8B7",
+                               "Avena_High"="#619CFF",
+                               "Bromus_High"="#B4D1BB",
+                               "MH_High"="#E8B8B7"),
+                      labels = c("Avena", "Bromus", "MH"),
+                      breaks = c("Avena_Low", "Bromus_Low", "MH_Low"),
+                      name = "Plant\nCommunity")+
+    #legend only Species
+    guides(fill = guide_legend(
+      override.aes = list(fill = c( "#619CFF", "#00BA38","#F8766D"))
+    )) +
+    
+    xlab("Precipitation Level")+
+    ylab("Relative Abundance")+
+    ggtitle("Root Symbionts")+
+    ylim(0,0.03)+
+    theme(legend.text=element_text(size=6),
+          legend.title=element_text(size=7),
+          legend.key.size = unit(0.3,"cm"),
+          plot.title = element_text(size=8),
+          axis.text.x=element_text(size=6),
+          axis.title=element_text(size=8),
+          axis.ticks.x=element_blank())
+
+##Pathogen----
+rootpathplot <- ggplot(data=rootfun, aes(Precip_Level,Pathotroph,fill=Species))+
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Relative Abundance")+
+  guides(fill=guide_legend(title="Plant\nCommunity"))+
+  ggtitle("Root Pathogens")+
+  ylim(0,0.8)+
+    scale_fill_manual(values=c("#619CFF", "#00BA38","#F8766D" ,"#619CFF", "#00BA38", "#F8766D"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text.x=element_blank(),
+        axis.title=element_blank(),
+        axis.ticks.x=element_blank())
+
+##Sap====
+rootsapplot <- ggplot(data=rootfun, aes(Precip_Level,Saprotroph,fill=(Species)))+
+  geom_boxplot(outlier.size=0.75)+
+  xlab("Precipitation Level")+
+  ylab("Relative Abundance")+
+  ggtitle("Root Saprotrophs")+
+  guides(fill=guide_legend(title="Plant\nCommunity"))+
+  ylim(0,0.65)+
+    scale_fill_manual(values=c("#619CFF", "#00BA38","#F8766D" ,"#619CFF", "#00BA38", "#F8766D"))+
+  theme(legend.text=element_text(size=6),
+        legend.title=element_text(size=7),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(size=8),
+        axis.text=element_text(size=6),
+        axis.title.y=element_blank(),
+        axis.title=element_text(size=8))
+```
+
+#### Cowplot
+```{r}
+# Richness and Symbiont only------
+plot_grid(soilrichplot,rootrichplot,soilsymplot,rootsymplot,
+            labels = c("A",'B','C','D'),
+            label_size=12,
+            ncol=2,
+            rel_widths=c(1.5,2))
+ggsave("Figures/boxplots_rich-symb.png",width = 6.5,height=6)
+
+# only path and sap
+plot_grid(soilpathplot,rootpathplot,soilsapplot,rootsapplot,
+          labels = c("A",'B','C','D'),
+          label_size=8,
+          ncol=2,
+          rel_widths=c(1.5,2))
+ggsave("Figures/boxplots_path-sap.png",width = 6.5,height=5)
+  
+# All-----
+plot_grid(soilrichplot,rootrichplot,soilsymplot,rootsymplot,soilpathplot,rootpathplot,soilsapplot,rootsapplot,
+          labels = c("A",'B','C','D','E','F','G','H'),
+          label_size=8,
+          ncol=2,
+          rel_widths=c(1.5,2))
+ggsave("Figures/boxplots.png",width = 6,height=8.25)
+
+plot_grid(soilrichplot.spp,rootrichplot.spp,soilsymplot.spp,rootsymplot.spp,soilpathplot.spp,rootpathplot.spp,soilsapplot.spp,rootsapplot.spp,
+          labels = c("A",'B','C','D','E','F','G','H'),
+          label_size=8,
+          ncol=2,
+          rel_widths=c(1.5,2))
+ggsave("Figures/boxplots.spp.png",width = 6,height=8.25)
+```
+
+## Supplemental Tables and Figures
+
+#### Table S1 and Figure S1
+```{r}
+## Prep----
+#Prep----
+cn <- read.csv('data/%CN.csv')
+micro <- read.csv('data/Micronutrients.csv')
+all.nut <- left_join(micro,cn,by="Sample",suffix=c("",".y")) %>%
+           select(-ends_with(".y"))
+all.nut <- na.omit(all.nut)
+all.nut$Precip_Level[all.nut$Precip_Level=="Medium"] <- "High"
+# all_precip$Precip.Level[all_precip$site=="Dye Creek"] <- "Low"
+# all.nut$Precip_Level <- factor(all.nut$Precip_Level,levels=c("Low","Medium","High"))
+# all.nut$Transect <- factor(all.nut$Transect,levels=c("Forage","Mixed","MH"))
+all.nut$TransectxPrecip <- paste(all.nut$Transect,all.nut$Precip_Level,sep="_")
+all.nut$TransectxPrecip <- factor(all.nut$TransectxPrecip,levels=c(c("MH_Low","MH_Medium","MH_High","Forage_Low","Forage_Medium","Forage_High","Mixed_Low","Mixed_Medium","Mixed_High")))
+
+facet.nut <- read.csv("General Data/facet.nut.csv")
+facet.nut$Nutrient <- factor(facet.nut$Nutrient,levels = c("Percent_Carbon","Percent_Nitrogen","Calcium_ppm","Copper_ppm","Magnesium_ppm","Phosphorus_ppm","Potassium_ppm","Sodium_ppm","Sulfur_ppm","Zinc_ppm"))
+facet.nut$Site <- factor(facet.nut$Site,levels=c("Lassen","SFREC","Dye Creek","Plumas","Traverse Creek","Pollock Pines"))
+
+## Site
+site.nut <- subset.data.frame(all.nut,all.nut$Transect=="Forage"|
+                                all.nut$Transect=="MH")
+site.nut$Site <- factor(site.nut$Site,levels=c("Lassen","SFREC","Dye Creek","Plumas-Avena","Plumas-Bromus","Traverse Creek","Pollock Pines"))
+# change medium to high
+precip.change <- site.nut$Precip_Level
+precip.change<-replace(precip.change, precip.change=="Medium", "High")
+#precip.change <- as.data.frame(precip.change)
+#precip.change <- factor(precip.change,levels=c("Low","High"))
+site.nut <- site.nut[,-4]
+site.nut$Precip_Level <- precip.change
+
+SF.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="SF")
+DC.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="DC")
+TC.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="TC")
+LS.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="LS")
+PL.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="PLAV"|
+                              site.nut$Site_Code=="PLBR" )
+PP.nut <- subset.data.frame(site.nut,site.nut$Site_Code=="PP")
+```
+
+```{r}
+## Mean and sd of nutrients-----
+mean(PP.nut$Calcium_ppm)
+sd(PP.nut$Calcium_ppm)
+
+mean(PP.nut$Copper_ppm)
+sd(PP.nut$Copper_ppm)
+
+mean(PP.nut$Magnesium_ppm)
+sd(PP.nut$Magnesium_ppm)
+
+mean(PP.nut$Phosphorus_ppm)
+sd(PP.nut$Phosphorus_ppm)
+
+mean(PP.nut$Potassium_ppm)
+sd(PP.nut$Potassium_ppm)
+
+mean(PP.nut$Sodium_ppm)
+sd(PP.nut$Sodium_ppm)
+
+mean(PP.nut$Sulfur._ppm)
+sd(PP.nut$Sulfur._ppm)
+
+mean(PP.nut$Zinc_ppm)
+sd(PP.nut$Zinc_ppm)
+
+mean(PP.nut$Percent_Carbon)
+sd(PP.nut$Percent_Carbon)
+
+mean(PP.nut$Percent_Nitrogen)
+sd(PP.nut$Percent_Nitrogen)
+
+## Facet-----
+ggplot (data=facet.nut,mapping=aes(x=Site, y=Value,color=Site))+
+  geom_boxplot()+
+  facet_wrap(~Nutrient,scales="free_y")+
+  theme(text = element_text(size=10),
+        axis.text.x=element_text(angle=45,vjust=1,hjust=1))+
+  ggtitle("Soil Nutrients by Site")
+ggsave("Figures/Nutrients/facet_site.png",width=7.5,height=8)
+```
+
+## Table S2 and Figure S2
+```{r}
+## %C-----
+# final model
+c.gls <- lme(Percent_Carbon~Precip_Level,
+              random=~1|Site,
+              method="REML",
+              weights=varIdent(form = ~1|Site),
+              data=site.nut)
+
+###Results----
+anova(c.gls)
+summary(c.gls)
+
+### Post hoc-----
+summary(glht(c.gls,linfct = mcp(Precip_Level="Tukey")))
+###Figures----
+gg.C <- ggplot(data=site.nut, aes(Precip_Level,Percent_Carbon))+
+  geom_boxplot()+
+  ggtitle("% Carbon")
+
+## %N-----
+n.gls <- lme(Percent_Nitrogen~Precip_Level,
+              random=~1|Site,
+              method="REML",
+              weights=varIdent(form = ~1|Site),
+              data=site.nut)
+###Results----
+anova(n.gls)
+#Precip: 0.44
+
+###Post Hoc----
+summary(glht(n.gls,linfct = mcp(Precip_Level="Tukey")))
+
+#### figure
+gg.N <- ggplot(data=site.nut, aes(Precip_Level,Percent_Nitrogen))+
+  geom_boxplot()+
+  ggtitle("% Nitrogen")
+
+### Phosphorus-----
+p.gls <- lme(Phosphorus_ppm~Precip_Level,
+              random=~1|Site,
+              method="REML",
+              weights=varIdent(form = ~1|Site),
+              data=site.nut)
+
+###Results----
+anova(p.gls)
+#precip: 0.41
+## Post hoc-----
+summary(glht(p.gls,linfct = mcp(Precip_Level="Tukey")))
+
+#### figure----
+gg.P <- ggplot(data=site.nut, aes(Precip_Level,Phosphorus_ppm))+
+  geom_boxplot()+
+  ggtitle("Phosphorus")
+
+## Potassium
+k.gls <- lme(Potassium_ppm~Precip_Level,
+              random=~1|Site,
+              method="REML",
+              weights=varIdent(form = ~1|Site),
+              data=site.nut)
+###Results----
+anova(k.gls)
+
+###Post Hoc----
+summary(glht(k.gls,linfct = mcp(Precip_Level="Tukey")))
+
+### figure----
+gg.K <- ggplot(data=site.nut, aes(Precip_Level,Potassium_ppm))+
+  geom_boxplot()+
+  ggtitle("Potassium")
+
+## Cowplot-----
+plot_grid(gg.C,gg.N,gg.P,gg.K,labels=c("A","B","C","D"))
+ggsave("Figures/nutrient.cowplot.png",width = 8,height=8)
+
+```
+
